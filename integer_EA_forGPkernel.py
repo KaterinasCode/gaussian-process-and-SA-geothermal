@@ -11,7 +11,7 @@ k5=gpflow.kernels.Linear()
 k6=gpflow.kernels.Constant()
 k7=gpflow.kernels.Cosine()
 k8 = gpflow.kernels.White()
-kernels = [k1,k2,k3,k4,k5,k1*k1, k2*k5, k4*k5, k7]
+kernels = [k1,k2,k3,k4,k5,k7]
 X = sample_s
 individuals_list = []
 fitness_list = []
@@ -38,57 +38,55 @@ def mutate_bitflip(individual, indpb):
     return individual,
 
 def evaluate(individual):
-    print(individual)
-    for i in range(len(individuals_list)):
-        if (individual == individuals_list[i]):
-            return(fitness_list[i])
-    individuals_list.append(individual)
-    k=3
+
+    k = 3
     kf = KFold(n_splits=k)
-    errors = []
     lmls = []
-    f = 0
-    first_nonnegative_index = None
-    for i, value in enumerate(individual):
-        if individual[i] >= 0.5:
-            first_nonnegative_index = i
-            print(first_nonnegative_index)
-            break
-    if (first_nonnegative_index is None):
-        kernel = k6
-    else:
-        kernel = kernels[first_nonnegative_index]
-    for i in range(len(individual)):
-        if (individual[i]>=0.5):
+
+    active_kernels = [kernels[i] for i, value in enumerate(individual[:-1]) if value >= 0.5]
+
+    if len(active_kernels) == 0:
+        return (0),
+    firstnonnegativeindex = None
+    for i in range(len(individual)-1):
+        if individual[i]>0.5: 
+            firstnonnegativeindex = i
+    kernel = active_kernels[0]
+    for i in range(firstnonnegativeindex,len(individual)-1):
+        if (individual[i]>=0.5 and individual[len(individual)-1] <=0.5 ):
             kernel +=kernels[i]
+        elif (individual[i]>=0.5 and individual[len(individual)-1] >0.5 ):
+            kernel *=kernels[i]    
+
+    print(individual)
+    print("Kernel Components:")
+
+    if isinstance(kernel, gpflow.kernels.Composite):
+        for component in kernel.kernels:
+            print(component)
+    else:
+        print(kernel)
 
     for train_index, test_index in kf.split(X):
     # Split the data into training and test sets for the current fold
         X_train, X_test = sample_s[train_index], sample_s[test_index]
-        y_train, y_test = obj2[train_index], obj2[test_index]
-        data = (X_train.reshape(-1, 17), y_train.reshape(-1, 1))
+        y_train, y_test = obj1[train_index], obj1[test_index]
+        data = (X_train.reshape(-1, 15), y_train.reshape(-1, 1))
         model = gpflow.models.GPR(data, kernel=kernel)
         opt = gpflow.optimizers.Scipy()
         opt.minimize(model.training_loss, model.trainable_variables)
-        f_mean, f_var = model.predict_f(sample_test_s, full_cov=False)
         optimizer = gpflow.optimizers.Scipy()
         optimizer.minimize(model.training_loss, variables=model.trainable_variables)
-    # Make predictions on the test data
         y_pred = model.predict_y(X_test)[0]
-        #plotmodel(X_test, y_test, y_pred)
-    # Calculate the mean squared error for the current fold
         has_nan = np.isnan(y_pred)
         if(np.any(has_nan)==True):
             return [-2000]
-        error = mean_squared_error(y_test, y_pred)
         lml = model.log_marginal_likelihood().numpy()
-        print(lml)
-        errors.append(error)
         if lml >1e6:
-            return 0
+            return (0,)
         else:
             lmls.append(lml)
-    print(np.mean(errors), np.mean(lmls))
+    print(np.mean(lmls))
     return (-np.mean(lmls),)
 
 # Register the evaluation function
@@ -98,7 +96,7 @@ toolbox.register("select", tools.selTournament, tournsize=3)
 toolbox.register("mate", tools.cxTwoPoint)  # Crossover operator
 # Define the evolutionary algorithm parameters
 
-population_size = 9
+population_size = 6
 generations = 3
 
 # Create an initial population
@@ -108,8 +106,10 @@ best_fitness_values = []
 for _ in range(1):
     for i in range(population_size):
         individual = creator.Individual()
-        individual_in = np.zeros(9)
+        individual_in = np.zeros(7)
         individual_in[i]=1
+        if i%2==0:
+            individual_in[len(individual_in)-1] =1 
         individual.extend(individual_in)
         population.append(individual)
     # Generate random values for each decision variable
@@ -151,9 +151,11 @@ plt.xlabel("Generation")
 plt.ylabel("Objective Function")
 plt.title("Evolution of Objective Function")
 plt.show()
+plt.figure()
 for i in range(len(fitness_list)):
-    plt.scatter(i,fitness_list[i])
-plt.xlabel("Generation")
-plt.ylabel("Objective Function")
-plt.title("Evolution of Objective Function")
+    plt.scatter(i, fitness_list[i])
+
+plt.xlabel('Iteration')
+plt.ylabel('Fitness')
+plt.title('Fitness Progression')
 plt.show()
